@@ -1,6 +1,8 @@
 from enum import Enum
+from queue import Queue
 from threading import Thread
 from typing import Tuple
+from packet import Packet
 import udp
 
 Address = Tuple[str, int]
@@ -28,10 +30,12 @@ class socket(udp.UDPsocket):
         pass
 
     def recv(self, buffer_size):
+        return self.conn.recv(buffer_size)
         # client recv message
         pass
 
     def send(self, data: bytes, flags: int = ...):
+        self.conn.send(data, flags)
         # client send message
         pass
 
@@ -42,6 +46,8 @@ class Connection():
         self.socket = socket
         self.seq = 0
         self.ack = 0
+        self.packet_send_queue: Queue[Packet] = Queue()
+        self.packet_receive_queue: Queue[Packet] = Queue()
         self.fsm = FSM(self)
         self.fsm.start()
         pass
@@ -51,13 +57,21 @@ class Connection():
         pass
 
     def recv(self, buffer_size):
+        return self.packet_receive_queue.get(timeout=0.5)
         # server recv message
         pass
 
     def send(self, data: bytes, flags: int = ...):
+        packet = Packet(data=data)
+        self.packet_send_queue.put(packet)
         # server send message
         pass
 
+    def send_packet(self):
+        self.socket.sendto(self.packet_send_queue.get().transform_to_byte(), self.client)
+
+    def receive_packet(self, buffer_size):
+        self.packet_receive_queue.put(self.socket.recvfrom(buffer_size))
 
 class State(Enum):
     CLOSE = 0
