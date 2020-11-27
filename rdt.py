@@ -34,13 +34,12 @@ class socket(udp.UDPsocket):
         self.receiver = Thread(target=receive)
         self.receiver.start()
 
-        self.conn.send_packet(packet=Packet(SYN=True, data=b'client SYN'))
-        self.conn.state = State.WAIT_SYN
+        self.conn.send_packet(packet=Packet(SYN=True, data=b'\xAC'))
+        self.conn.state = State.CLIENT_WAIT_SYN
 
     def accept(self):
         # server accept a connection and add it to conns
         # return conns[addr], addr
-        self.state = State.LISTING
 
         def receive():
             while True:
@@ -60,7 +59,7 @@ class socket(udp.UDPsocket):
     def close(self):
         # TODO unfinished
         self.conn.send_packet(Packet(data=b'client FIN', FIN=True))
-        self.conn.state = State.WAIT_FIN_1
+        self.conn.state = State.CLIENT_WAIT_FIN_1
         # shot down conn
         pass
 
@@ -73,7 +72,7 @@ class socket(udp.UDPsocket):
         self.conn.send(data, flags)
 
 
-class Connection():
+class Connection:
     def __init__(self, client, socket):
         self.client = client
         self.socket = socket
@@ -110,27 +109,28 @@ class Connection():
         # server send message
 
     def send_packet(self, packet):
-        print("send ", packet)
+        print("send ", packet, self.state)
         self.socket.sendto(packet.transform_to_byte(), self.client)
         self.sending_list.append([packet, time()])
 
     def receive_packet(self, packet):
-        print("receive ", packet)
+        print("receive ", packet, self.state)
         self.packet_receive_queue.put(packet)
 
 
 class State(Enum):
     CLOSE = auto()
-    LISTING = auto()
-    WAIT_SYN = auto()
-    WAIT_FIN_1 = auto()
+    CONNECT = auto()
+    CLIENT_WAIT_SYN = auto()
+    CLIENT_WAIT_FIN_1 = auto()
+    CLIENT_WAIT_FIN_2 = auto()
+    SERVER_WAIT_FIN = auto()
 
 
 class FSM(Thread):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
-        self.state = State.CLOSE
 
     def run(self):
         alive = True
@@ -139,19 +139,38 @@ class FSM(Thread):
             # send the message in send waiting list
             # TODO add detail
             try:
-                if len(self.conn.packet_send_queue.queue) == 0:
+                if len(self.conn.packet_send_queue.queue) == 0 and self.conn.state == State.CONNECT:
                     data = self.conn.packet_send_queue.get(timeout=0.5)
                     if type(data) == Packet:
+                        data.seq = self.conn.seq
+                        data.seq_ack = self.conn.ack
+                        self.conn.seq += data.len
                         self.conn.send_packet(data)
                     else:
                         packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
+                        self.conn.seq += packet.len
                         self.conn.send_packet(packet)
             except:
                 pass
 
             # receive the message from receive waiting list
             try:
-                packet = self.conn.packet_receive_queue.get()
+                packet = self.conn.packet_receive_queue.get(timeout=0.5)
             except:
                 continue
+
+            # server receive first hand shake
+            if packet.SYN and not packet.ACK and self.conn.state == State.CLOSE:
+                self.conn.state = State.CONNECT
+                self.conn.ack = packet.seq + 1
+                self.conn.send_packet(Packet(data=b'ac', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True))
+            # client receive reply of second hand shake
+            elif packet.SYN and packet.ACK and self.conn.state == State.CLIENT_WAIT_SYN:
+                self.conn.state = State.CONNECT
+                self.conn.seq = packet.seq_ack
+                self.conn.ack = packet.seq + 1
+                self.conn.send_packet(Packet(data=b'ac', seq=self.conn.seq, seq_ack=self.conn.ack))
+
+
+            # elif self.conn.state == State.CONNECT:
             self.conn.recv_queue.put(packet.payload)
