@@ -16,9 +16,8 @@ class socket(udp.UDPsocket):
     def __init__(self):
         super(socket, self).__init__()
         self.conn: Connection
-        self.conns: dict[Address: Connection] = {}    # connection set for server
+        self.conns: dict[Address: Connection] = {}  # connection set for server
         self.new_conn: Queue[Connection] = Queue()
-
 
     def connect(self, address: Address):
         # client connect to server, create conn
@@ -35,9 +34,8 @@ class socket(udp.UDPsocket):
         self.receiver = Thread(target=receive)
         self.receiver.start()
 
-        self.conn.send_packet(packet=Packet(SYN=True,data=b'client SYN'))
+        self.conn.send_packet(packet=Packet(SYN=True, data=b'client SYN'))
         self.conn.state = State.WAIT_SYN
-
 
     def accept(self):
         # server accept a connection and add it to conns
@@ -59,18 +57,16 @@ class socket(udp.UDPsocket):
         conn = self.new_conn.get()
         return conn, conn.client
 
-
     def close(self):
+        # TODO unfinished
         self.conn.send_packet(Packet(data=b'client FIN', FIN=True))
         self.conn.state = State.WAIT_FIN_1
         # shot down conn
         pass
 
-
     def recv(self, buffer_size):
         # client recv message
         return self.conn.recv(buffer_size)
-
 
     def send(self, data: bytes, flags: int = ...):
         # client send message
@@ -85,46 +81,41 @@ class Connection():
         self.ack = 0
         self.connecting = True
         self.state = State.CLOSE
-        self.packet_send_queue: Queue[Packet] = Queue()      # packet waiting to send
-        self.packet_receive_queue: Queue[Packet] = Queue()   # packet waiting to receive
-        self.sending_list = []                               # already send but haven't reply
-        self.recv_queue: Queue[bytes] = Queue()              # message that already been receive
+        self.packet_send_queue = Queue()  # packet or data waiting to send
+        self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
+        self.sending_list = []  # already send but haven't reply
+        self.recv_queue: Queue[bytes] = Queue()  # message that already been receive
         self.fsm = FSM(self)
         self.fsm.start()
 
-
     def close(self):
         # close connection of conns[addr]
+        # TODO unfinished
         if self.client in self.socket.conns:
             del self.socket.conns[self.client]
         self.close_connection()
         pass
 
-
     def close_connection(self):
+        # TODO unfinished
         self.state = State.CLOSE
         self.connecting = False
-
 
     def recv(self, buffer_size):
         return self.recv_queue.get()
         # server recv message
 
-
-    def send(self, data: bytes, flags = ...):
-        packet = Packet(data=data, seq_ack=self.ack, seq=self.seq)
-        self.packet_send_queue.put(packet)
+    def send(self, data: bytes, flags=...):
+        self.packet_send_queue.put(data)
         # server send message
 
-
     def send_packet(self, packet):
-        print("send ",packet)
+        print("send ", packet)
         self.socket.sendto(packet.transform_to_byte(), self.client)
         self.sending_list.append([packet, time()])
 
-
     def receive_packet(self, packet):
-        print("receive ",packet)
+        print("receive ", packet)
         self.packet_receive_queue.put(packet)
 
 
@@ -135,24 +126,26 @@ class State(Enum):
     WAIT_FIN_1 = auto()
 
 
-
 class FSM(Thread):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
         self.state = State.CLOSE
 
-
     def run(self):
         alive = True
 
         while alive:
-
             # send the message in send waiting list
+            # TODO add detail
             try:
-                if len(self.conn.packet_send_queue.queue) == 0 :
-                    packet = self.conn.packet_send_queue.get(timeout=0.5)
-                    self.conn.send_packet(packet)
+                if len(self.conn.packet_send_queue.queue) == 0:
+                    data = self.conn.packet_send_queue.get(timeout=0.5)
+                    if type(data) == Packet:
+                        self.conn.send_packet(data)
+                    else:
+                        packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
+                        self.conn.send_packet(packet)
             except:
                 pass
 
