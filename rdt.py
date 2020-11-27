@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, auto
 from queue import Queue
 from threading import Thread
 from time import time
@@ -10,11 +10,13 @@ Address = Tuple[str, int]
 
 
 class socket(udp.UDPsocket):
+    # for a client, self.conn is the connection to server.
+    # for a server, 'accept' will return conns[addr] which means the connection to client
+
     def __init__(self):
         super(socket, self).__init__()
-        self.state = State.CLOSE
         self.conn: Connection
-        self.conns: dict[Address: Connection] = {}
+        self.conns: dict[Address: Connection] = {}    # connection set for server
         self.new_conn: Queue[Connection] = Queue()
 
 
@@ -25,7 +27,7 @@ class socket(udp.UDPsocket):
         def receive():
             while self.conn.connecting == True:
                 try:
-                    data, addr = self.recvfrom(2048)
+                    data, addr = self.recvfrom(65536)
                     self.conn.receive_packet(Packet.read_from_byte(data))
                 except:
                     pass
@@ -33,7 +35,7 @@ class socket(udp.UDPsocket):
         self.receiver = Thread(target=receive)
         self.receiver.start()
 
-        self.conn.send_packet(packet=Packet(SYN=True,data=b'\xFF'))
+        self.conn.send_packet(packet=Packet(SYN=True,data=b'client SYN'))
         self.conn.state = State.WAIT_SYN
 
 
@@ -41,21 +43,26 @@ class socket(udp.UDPsocket):
         # server accept a connection and add it to conns
         # return conns[addr], addr
         self.state = State.LISTING
+
         def receive():
             while True:
-                data, addr = self.recvfrom(2048)
+                data, addr = self.recvfrom(65536)
                 if addr not in self.conns:
                     self.conns[addr] = Connection(addr, self)
                     self.new_conn.put(self.conns[addr])
                 packet = Packet.read_from_byte(data)
                 self.conns[addr].receive_packet(packet)
+
         self.receiver = Thread(target=receive)
         self.receiver.start()
+
         conn = self.new_conn.get()
         return conn, conn.client
 
 
     def close(self):
+        self.conn.send_packet(Packet(data=b'client FIN', FIN=True))
+        self.conn.state = State.WAIT_FIN_1
         # shot down conn
         pass
 
@@ -88,7 +95,15 @@ class Connection():
 
     def close(self):
         # close connection of conns[addr]
+        if self.client in self.socket.conns:
+            del self.socket.conns[self.client]
+        self.close_connection()
         pass
+
+
+    def close_connection(self):
+        self.state = State.CLOSE
+        self.connecting = False
 
 
     def recv(self, buffer_size):
@@ -96,7 +111,7 @@ class Connection():
         # server recv message
 
 
-    def send(self, data: bytes, flags: int = ...):
+    def send(self, data: bytes, flags = ...):
         packet = Packet(data=data)
         self.packet_send_queue.put(packet)
         # server send message
@@ -114,9 +129,10 @@ class Connection():
 
 
 class State(Enum):
-    CLOSE = 0
-    LISTING = 1
-    WAIT_SYN = 2
+    CLOSE = auto()
+    LISTING = auto()
+    WAIT_SYN = auto()
+    WAIT_FIN_1 = auto()
 
 
 
@@ -131,6 +147,8 @@ class FSM(Thread):
         alive = True
 
         while alive:
+
+            # send the message in send waiting list
             try:
                 if len(self.conn.packet_send_queue.queue) == 0 :
                     packet = self.conn.packet_send_queue.get(timeout=0.5)
@@ -138,6 +156,7 @@ class FSM(Thread):
             except:
                 pass
 
+            # receive the message from receive waiting list
             try:
                 packet = self.conn.packet_receive_queue.get()
             except:
