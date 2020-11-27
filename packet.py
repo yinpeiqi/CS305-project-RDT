@@ -3,8 +3,8 @@ class Packet:
     """
     Reliable Data Transfer Segment Format:
 
-    |  SYN  |  FIN  |  ACK  |  SEQ  |  SEQ ACK |  LEN  |  CHECKSUM |  PAYLOAD  |
-    | 1 bit | 1 bit | 1 bit | 4 byte|  4 byte  | 4 byte|   2 byte  |    LEN    |
+    | EMPTY |  SYN  |  FIN  |  ACK  |  SEQ  |  SEQ ACK |  LEN  |  CHECKSUM |  PAYLOAD  |
+    |5 bits | 1 bit | 1 bit | 1 bit | 4 byte|  4 byte  | 4 byte|   2 byte  |    LEN    |
 
     """
 
