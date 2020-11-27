@@ -58,7 +58,7 @@ class socket(udp.UDPsocket):
 
     def close(self):
         # TODO unfinished
-        self.conn.send_packet(Packet(data=b'\x04', FIN=True))
+        self.conn.send_packet(Packet(data=b'\x04', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack))
         self.conn.state = State.CLIENT_WAIT_FIN_1
         # shot down conn
         pass
@@ -124,6 +124,7 @@ class State(Enum):
     CLOSE = auto()
     CONNECT = auto()
     CLIENT_WAIT_SYN = auto()
+    SERVER_WAIT_SYNACK = auto()
     CLIENT_WAIT_FIN_1 = auto()
     CLIENT_WAIT_FIN_2 = auto()
     SERVER_WAIT_FIN = auto()
@@ -140,7 +141,7 @@ class FSM(Thread):
         while alive:
             # send the message in send waiting list
             # TODO add detail
-            if len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT:
+            if len(self.conn.packet_send_queue.queue) != 0: # and self.conn.state == State.CONNECT:
                 data = self.conn.packet_send_queue.get()
                 if type(data) == Packet:
                     data.seq = self.conn.seq
@@ -160,15 +161,22 @@ class FSM(Thread):
 
             # server receive first hand shake
             if packet.SYN and not packet.ACK and self.conn.state == State.CLOSE:
-                self.conn.state = State.CONNECT
+                self.conn.state = State.SERVER_WAIT_SYNACK
                 self.conn.ack = packet.seq + 1
                 self.conn.send_packet(Packet(data=b'\x02', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True))
+                continue
             # client receive reply of second hand shake
             elif packet.SYN and packet.ACK and self.conn.state == State.CLIENT_WAIT_SYN:
                 self.conn.state = State.CONNECT
                 self.conn.seq = packet.seq_ack
                 self.conn.ack = packet.seq + 1
-                self.conn.send_packet(Packet(data=b'\x03', seq=self.conn.seq, seq_ack=self.conn.ack))
+                self.conn.send_packet(Packet(data=b'\x03', seq=self.conn.seq, seq_ack=self.conn.ack, ACK=True))
+                continue
+            # server receive third hand shake
+            elif packet.ACK and self.conn.state == State.SERVER_WAIT_SYNACK:
+                self.conn.state = State.CONNECT
+                self.conn.seq = packet.seq_ack
+                continue
 
             # elif self.conn.state == State.CONNECT:
             self.conn.recv_queue.put(packet.payload)
