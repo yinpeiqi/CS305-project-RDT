@@ -112,7 +112,7 @@ class Connection():
 
 
     def send(self, data: bytes, flags = ...):
-        packet = Packet(data=data)
+        packet = Packet(data=data, seq_ack=self.ack, seq=self.seq)
         self.packet_send_queue.put(packet)
         # server send message
 
