@@ -1,5 +1,13 @@
 class Packet:
 
+    """
+    Reliable Data Transfer Segment Format:
+
+    |  SYN  |  FIN  |  ACK  |  SEQ  |  SEQ ACK |  LEN  |  CHECKSUM |  PAYLOAD  |
+    | 1 bit | 1 bit | 1 bit | 4 byte|  4 byte  | 4 byte|   2 byte  |    LEN    |
+
+    """
+
     def __init__(self, SYN=False, ACK=False, FIN=False, seq=0, seq_ack=0, data=b''):
         self.SYN = SYN
         self.ACK = ACK
@@ -12,7 +20,7 @@ class Packet:
 
 
     @staticmethod
-    def calc_checksum(payload):
+    def calc_checksum(payload:bytes):
         sum = 0
         count = 0
         for byte in payload:
@@ -25,7 +33,7 @@ class Packet:
         return (sum & 65535)
 
 
-    def transform_to_byte(self):
+    def transform_to_byte(self) -> bytes:
         data = b''
 
         flag: int = self.SYN * 4 + self.ACK * 2 + self.FIN * 1
@@ -41,7 +49,8 @@ class Packet:
 
 
     @staticmethod
-    def read_from_byte(data: bytes):
+    def read_from_byte(data: bytes) -> 'Packet':
+        """Parse raw bytes into an RDT Segment Packet"""
         packet = Packet()
 
         flag = int.from_bytes(data[0:2], byteorder='big')
@@ -52,10 +61,13 @@ class Packet:
         packet.checksum = int.from_bytes(data[14:16], byteorder='big')
         packet.payload = data[16:]
 
-        assert packet.len == len(packet.payload)
-        assert packet.checksum == Packet.calc_checksum(packet.payload)
+        try:
+            assert packet.len == len(packet.payload)
+            assert packet.checksum == Packet.calc_checksum(packet.payload)
 
-        return packet
+            return packet
+        except AssertionError as e:
+            raise  ValueError from e
 
 
 
@@ -66,11 +78,7 @@ if __name__ == "__main__":
         print(b, end=' ')
     print()
 
-    try:
-        rec_packet = Packet.read_from_byte(data)
-        data = rec_packet.transform_to_byte()
-        for b in data:
-            print(b, end=' ')
-        print()
-    except:
-        print("error")
+    rec_packet = Packet.read_from_byte(data)
+    data = rec_packet.transform_to_byte()
+    for b in data:
+        print(b, end=' ')
