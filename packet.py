@@ -58,9 +58,20 @@ class Packet:
         return packet
 
 
+    def __str__(self):
+        res = ''
+        if self.SYN:
+            res += "SYN, "
+        if self.ACK:
+            res += "ACK, "
+        if self.FIN:
+            res += "FIN, "
+        res += "[seq={}, ack={}, len={}, data={}]".format(self.seq, self.seq_ack, self.len, self.payload)
+        return res
 
 if __name__ == "__main__":
     packet = Packet(False, True, True, 1, 1, b'\xff\xcc\xdd')
+    print(packet)
     data = packet.transform_to_byte()
     for b in data:
         print(b, end=' ')
@@ -68,6 +79,7 @@ if __name__ == "__main__":
 
     try:
         rec_packet = Packet.read_from_byte(data)
+        print(rec_packet)
         data = rec_packet.transform_to_byte()
         for b in data:
             print(b, end=' ')
