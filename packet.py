@@ -16,14 +16,21 @@ class Packet:
         self.seq_ack = seq_ack
         self.len = len(data)
         self.payload = data
-        self.checksum = Packet.calc_checksum(self.payload)
+        self.checksum = Packet.calc_checksum(self)
 
 
     @staticmethod
-    def calc_checksum(payload:bytes):
+    def calc_checksum(packet):
+        data = b''
+        flag: int = packet.SYN * 4 + packet.ACK * 2 + packet.FIN * 1
+        data += int.to_bytes(flag, 2, byteorder='big')
+        data += int.to_bytes(packet.seq, 4, byteorder='big')
+        data += int.to_bytes(packet.seq_ack, 4, byteorder='big')
+        data += int.to_bytes(packet.len, 4, byteorder='big')
+        data += packet.payload
         sum = 0
         count = 0
-        for byte in payload:
+        for byte in data:
             if count % 2 == 0:
                 sum += 256 * int(byte)
             else:
@@ -61,13 +68,7 @@ class Packet:
         packet.checksum = int.from_bytes(data[14:16], byteorder='big')
         packet.payload = data[16:]
 
-        try:
-            assert packet.len == len(packet.payload)
-            assert packet.checksum == Packet.calc_checksum(packet.payload)
-
-            return packet
-        except AssertionError as e:
-            raise  ValueError from e
+        return packet
 
 
     def __str__(self):
