@@ -191,15 +191,9 @@ class FSM(Thread):
                 # TODO add detail
                 if len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT:
                     data = self.conn.packet_send_queue.get()
-                    if type(data) == Packet:
-                        data.seq = self.conn.seq
-                        data.seq_ack = self.conn.ack
-                        self.conn.seq += data.len
-                        self.conn.send_packet_to_sending_list(data)
-                    else:
-                        packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
-                        self.conn.seq += packet.len
-                        self.conn.send_packet_to_sending_list(packet)
+                    packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
+                    self.conn.seq += packet.len
+                    self.conn.send_packet_to_sending_list(packet)
 
             # receive the message from receive waiting list
             try:
@@ -282,6 +276,7 @@ class FSM(Thread):
 
             # receive a request
             elif not packet.ACK and self.conn.state == State.CONNECT:
+                if packet.seq == self.conn.ack:
+                    self.conn.recv_queue.put(packet.payload)
                 self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
-                self.conn.recv_queue.put(packet.payload)
                 self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
