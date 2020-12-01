@@ -91,7 +91,8 @@ class Connection:
         self.sending_list = []  # already send but haven't reply
         if self.socket.mode == 'SR':
             self.unACK: dict[int: bool] = {}  # already send but unACK
-            self.have_ACKed = set() # already handle message
+            self.next_ack = 1 # if next_ack was receive then bring it to rece_queue
+            self.receive_dict: dict[int: Packet] = {} # already receive but haven't been read
         self.recv_queue: Queue[bytes] = Queue()  # message that already been receive
         self.fsm = FSM(self)
         self.fsm.start()
@@ -304,8 +305,11 @@ class FSM(Thread):
                         self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
                         self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
                     elif self.conn.socket.mode == 'SR':
-                        if packet.seq + packet.len not in self.conn.have_ACKed:
-                            self.conn.recv_queue.put(packet.payload)
-                            self.conn.have_ACKed.add(packet.seq + packet.len)
+                        self.conn.receive_dict[packet.seq] = packet
                         self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
                         self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=packet.seq + packet.len))
+
+            if self.conn.socket.mode == 'SR':
+                while self.conn.next_ack in self.conn.receive_dict:
+                    self.conn.recv_queue.put(self.conn.receive_dict[self.conn.next_ack].payload)
+                    self.conn.next_ack += self.conn.receive_dict[self.conn.next_ack].len
