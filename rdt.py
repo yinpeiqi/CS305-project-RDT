@@ -219,6 +219,7 @@ class FSM(Thread):
             receive_cnt = 0
             while receive_cnt < self.conn.swnd_size:
                 receive_cnt += 1
+
                 # receive the message from receive waiting list
                 try:
                     packet = self.conn.packet_receive_queue.get(timeout=0.5)
@@ -295,10 +296,9 @@ class FSM(Thread):
                     elif self.conn.state == State.CLIENT_WAIT_FIN_2:
                         self.conn.state = State.CLIENT_TIME_WAIT
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
-                            0.0)
+                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),0.0)
                         self.conn.seq += 1
+                        break
 
 
                 # if receive a reply
