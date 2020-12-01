@@ -13,7 +13,7 @@ if __name__ == "__main__":
     # client.send(MESSAGE3)
     time.sleep(3)
     client.close()
-    while True:
-        data = client.recv(2048)
-        data = str(data) + "\n"
-        print(data, end='')
+    # while True:
+    #     data = client.recv(2048)
+    #     data = str(data) + "\n"
+    #     print(data, end='')
