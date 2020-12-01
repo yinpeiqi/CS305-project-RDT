@@ -89,6 +89,9 @@ class Connection:
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
         self.sending_list = []  # already send but haven't reply
+        if self.socket.mode == 'SR':
+            self.unACK: dict[int: bool] = {}  # already send but unACK
+            self.have_ACKed = set() # already handle message
         self.recv_queue: Queue[bytes] = Queue()  # message that already been receive
         self.fsm = FSM(self)
         self.fsm.start()
@@ -120,6 +123,8 @@ class Connection:
         self.socket.sendto(packet.transform_to_byte(), self.client)
 
     def send_packet_to_sending_list(self, packet, send_time=0.0):
+        if self.socket.mode == 'SR' and packet.seq + packet.len not in self.unACK:
+            self.unACK[packet.seq + packet.len] = True
         self.sending_list.append([packet, send_time])
 
     def receive_packet(self, packet):
@@ -158,13 +163,13 @@ class FSM(Thread):
 
             # retransmit
             if self.conn.state != State.CLOSE:
-                sending_list_copy = self.conn.sending_list.copy()
-                self.conn.sending_list.clear()
-                for i in range(len(sending_list_copy)):
-                    packet, send_time = sending_list_copy[i]
-                    if packet.seq >= self.conn.already_ack:
-                        self.conn.sending_list.append([packet, send_time])
                 if self.conn.socket.mode == 'GBN':
+                    sending_list_copy = self.conn.sending_list.copy()
+                    self.conn.sending_list.clear()
+                    for i in range(len(sending_list_copy)):
+                        packet, send_time = sending_list_copy[i]
+                        if packet.seq >= self.conn.already_ack:
+                            self.conn.sending_list.append([packet, send_time])
                     if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
                         current_send = 0
                         for packet, send_time in self.conn.sending_list:
@@ -174,9 +179,21 @@ class FSM(Thread):
                             if current_send == self.conn.swnd_size:
                                 break
 
-                else:
-                    # TODO SR
-                    pass
+                elif self.conn.socket.mode == 'SR':
+                    sending_list_copy = self.conn.sending_list.copy()
+                    self.conn.sending_list.clear()
+                    for i in range(len(sending_list_copy)):
+                        packet, send_time = sending_list_copy[i]
+                        if self.conn.unACK[packet.seq + packet.len]:
+                            self.conn.sending_list.append([packet, send_time])
+                    if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
+                        current_send = 0
+                        for packet, send_time in self.conn.sending_list:
+                            self.conn.sending_list[current_send][1] = time()
+                            self.conn.send_packet(packet)
+                            current_send += 1
+                            if current_send == self.conn.swnd_size:
+                                break
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
@@ -196,13 +213,14 @@ class FSM(Thread):
                     self.conn.send_packet_to_sending_list(packet)
 
             while True:
-            # receive the message from receive waiting list
+                # receive the message from receive waiting list
                 try:
                     packet = self.conn.packet_receive_queue.get(timeout=0.5)
                 except:
                     if self.conn.state == State.SERVER_WAIT_FIN and len(self.conn.sending_list) == 0:
                         self.conn.state = State.SERVER_LAST_ACK
-                        self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
+                        self.conn.send_packet_to_sending_list(
+                            Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
                         sleep(2)
                         self.conn.close()
@@ -211,7 +229,6 @@ class FSM(Thread):
                     print("NO packet")
                     break
 
-
                 if self.conn.socket.mode == 'GBN':
                     if packet.seq > self.conn.ack \
                             and self.conn.state not in (State.CLIENT_WAIT_FIN_2, State.CLIENT_WAIT_FIN_1) \
@@ -219,32 +236,33 @@ class FSM(Thread):
                         s = "come early, reject " + packet.__str__() + "\n"
                         print(s, end='')
                         continue
-                else:
-                    # TODO SR
-                    pass
 
                 # server receive first hand shake
                 if packet.SYN and not packet.ACK:
                     self.conn.state = State.SERVER_WAIT_SYNACK
                     self.conn.ack = packet.seq + 1
-                    packet = Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True)
-                    self.conn.send_packet_to_sending_list(packet, 0.0)
+                    self.conn.send_packet_to_sending_list(
+                        Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True), 0.0)
 
                 # client receive reply of second hand shake
                 elif packet.SYN and packet.ACK:
                     self.conn.state = State.CONNECT
+                    if self.conn.socket.mode == 'SR':
+                        self.conn.unACK[self.conn.seq] = False
                     self.conn.seq = packet.seq_ack
                     self.conn.ack = packet.seq + 1
-                    packet = Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, ACK=True)
-                    self.conn.send_packet(packet)
+                    self.conn.send_packet(Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, ACK=True))
 
                 # server receive third hand shake
                 elif packet.ACK and self.conn.state == State.SERVER_WAIT_SYNACK:
                     self.conn.state = State.CONNECT
+                    if self.conn.socket.mode == 'SR':
+                        self.conn.unACK[self.conn.seq] = False
                     self.conn.seq = packet.seq_ack
 
-                # TODO FIN
-                elif self.conn.state == State.CLIENT_WAIT_FIN_1 and packet.ACK and (packet.seq_ack == self.conn.seq_fin + 1):
+                # FIN
+                elif self.conn.state == State.CLIENT_WAIT_FIN_1 and packet.ACK and (
+                        packet.seq_ack == self.conn.seq_fin + 1):
                     self.conn.state = State.CLIENT_WAIT_FIN_2
                     self.conn.ack = max(self.conn.ack, packet.seq + 1)
                     self.conn.seq += 1
@@ -257,15 +275,17 @@ class FSM(Thread):
                     if self.conn.state == State.CONNECT:
                         self.conn.state = State.SERVER_WAIT_FIN
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
-                                                              0.0)
+                        self.conn.send_packet_to_sending_list(
+                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
+                            0.0)
                         self.conn.seq += 1
 
                     elif self.conn.state == State.CLIENT_WAIT_FIN_2:
                         self.conn.state = State.CLIENT_TIME_WAIT
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
-                                                              0.0)
+                        self.conn.send_packet_to_sending_list(
+                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
+                            0.0)
                         self.conn.seq += 1
 
 
@@ -273,14 +293,19 @@ class FSM(Thread):
                 elif packet.ACK and packet.len == 0 and self.conn.state == State.CONNECT:
                     if self.conn.socket.mode == 'GBN':
                         self.conn.already_ack = max(self.conn.already_ack, packet.seq_ack)
-                    else:
-                        # TODO SR
-                        pass
+                    elif self.conn.socket.mode == 'SR':
+                        self.conn.unACK[packet.seq_ack] = False
 
                 # receive a request
                 elif not packet.ACK and self.conn.state == State.CONNECT:
-                    if packet.seq == self.conn.ack:
-                        self.conn.recv_queue.put(packet.payload)
-                    self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
-                    ACK_packet = Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack)
-                    self.conn.send_packet(ACK_packet)
+                    if self.conn.socket.mode == 'GBN':
+                        if packet.seq == self.conn.ack:
+                            self.conn.recv_queue.put(packet.payload)
+                        self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
+                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
+                    elif self.conn.socket.mode == 'SR':
+                        if packet.seq + packet.len not in self.conn.have_ACKed:
+                            self.conn.recv_queue.put(packet.payload)
+                            self.conn.have_ACKed.add(packet.seq + packet.len)
+                        self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
+                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=packet.seq + packet.len))
