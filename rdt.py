@@ -85,6 +85,8 @@ class Connection:
         self.swnd_size = 5
         self.max_time = 1.0
         self.connecting = True
+        self.fin_cnt = 0
+        self.max_fin_cnt = 5
         self.state = State.CLOSE
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -164,6 +166,7 @@ class FSM(Thread):
 
             # retransmit
             if self.conn.state != State.CLOSE:
+
                 if self.conn.socket.mode == 'GBN':
                     sending_list_copy = self.conn.sending_list.copy()
                     self.conn.sending_list.clear()
@@ -213,11 +216,19 @@ class FSM(Thread):
                     self.conn.seq += packet.len
                     self.conn.send_packet_to_sending_list(packet)
 
-            while True:
+            receive_cnt = 0
+            while receive_cnt < self.conn.swnd_size:
+                receive_cnt += 1
                 # receive the message from receive waiting list
                 try:
                     packet = self.conn.packet_receive_queue.get(timeout=0.5)
+                    self.conn.fin_cnt = 0
                 except:
+                    if self.conn.state == State.SERVER_LAST_ACK:
+                        self.conn.fin_cnt += 1
+                        if self.conn.fin_cnt >= self.conn.max_fin_cnt:
+                            self.conn.close()
+                            self.alive = False
                     if self.conn.state == State.SERVER_WAIT_FIN and len(self.conn.sending_list) == 0:
                         self.conn.state = State.SERVER_LAST_ACK
                         self.conn.send_packet_to_sending_list(
