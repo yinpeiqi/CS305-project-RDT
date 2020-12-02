@@ -54,7 +54,7 @@ class socket(udp.UDPsocket):
                         self.conns[addr] = Connection(addr, self)
                         self.new_conn.put(self.conns[addr])
 
-                self.conns[addr].receive_packet(packet)
+                    self.conns[addr].receive_packet(packet)
 
         self.receiver = Thread(target=receive)
         self.receiver.start()
@@ -106,7 +106,6 @@ class Connection:
         self.recv_queue: Queue[bytes] = Queue()  # message that already been receive
         self.fsm = FSM(self)
         self.fsm.start()
-        print("CONNECTION\n\n")
 
     def close(self):
         # close connection of conns[addr]
@@ -168,12 +167,13 @@ class FSM(Thread):
         self.conn = conn
         self.alive = True
         self.finishing = False
-        print("FSM\n\n\n\n")
+
     def run(self):
 
         while self.alive:
 
             if self.conn.state == State.FINISH:
+                print("Finish\n",end='')
                 break
 
             # retransmit
@@ -247,7 +247,6 @@ class FSM(Thread):
                         self.conn.fin_cnt += 1
                         if self.conn.fin_cnt > self.conn.max_fin_cnt:
                             self.conn.close()
-                            self.conn.state = State.FINISH
                             break
 
                     elif self.conn.state == State.SERVER_WAIT_FIN:
@@ -259,6 +258,8 @@ class FSM(Thread):
 
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
                         self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq-1, seq_ack=self.conn.ack), 0.0)
+                        if time() - self.conn.close_timer > 5:
+                            self.conn.close()
 
                     print("NO packet\n",end='')
                     break
@@ -312,8 +313,6 @@ class FSM(Thread):
 
                 elif self.conn.state == State.SERVER_LAST_ACK and packet.ACK:
                     self.conn.close()
-                    self.conn.state = State.FINISH
-                    print(self.conn.state)
                     break
 
                 elif packet.FIN:
@@ -329,12 +328,6 @@ class FSM(Thread):
                         self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),0.0)
                         self.conn.seq += 1
                         self.conn.close_timer = time()
-
-                elif self.conn.state == State.CLIENT_TIME_WAIT:
-                    if time() - self.conn.close_timer > 5:
-                        self.conn.close()
-                        self.conn.state = State.FINISH
-                        break
 
 
                 # if receive a reply

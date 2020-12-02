@@ -7,7 +7,7 @@ if __name__ == "__main__":
     MESSAGE2 = b'22222222'
     MESSAGE3 = b'4444444444'
     client = socket()
-    client.connect(("127.0.0.1", 8000))
+    client.connect(("127.0.0.1", 8080))
     # client.send(MESSAGE)
     # client.send(MESSAGE2)
     # client.send(MESSAGE3)
