@@ -88,8 +88,9 @@ class Connection:
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
-        self.max_fin_cnt = 5
+        self.max_fin_cnt = 10
         self.state = State.CLOSE
+        self.close_timer = 0
         self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -233,20 +234,22 @@ class FSM(Thread):
                 except:
                     if self.conn.state == State.SERVER_LAST_ACK:
                         self.conn.fin_cnt += 1
+                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq-1, seq_ack=self.conn.ack),0.0)
                         if self.conn.fin_cnt >= self.conn.max_fin_cnt:
                             self.conn.close()
                             self.alive = False
                     if self.conn.state == State.SERVER_WAIT_FIN:
-                        self.conn.sending_list.clear()
                         self.conn.state = State.SERVER_LAST_ACK
                         if self.conn.socket.mode == 'SR':
                             self.conn.unACK[self.conn.seq + 1] = True
                         self.conn.send_packet_to_sending_list(
                             Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
-                        sleep(2)
-                        self.conn.close()
-                        self.alive = False
+                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq-1, seq_ack=self.conn.ack), 0.0)
+                        if time() - self.conn.close_timer > 20:
+                            self.conn.close()
+                            self.alive = False
+                            self.conn.state = State.CLOSE
 
                     print("NO packet\n",end='')
                     break
@@ -306,15 +309,15 @@ class FSM(Thread):
                     if self.conn.state == State.CONNECT:
                         self.conn.state = State.SERVER_WAIT_FIN
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),)
+                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),0.0)
                         self.conn.seq += 1
 
                     elif self.conn.state == State.CLIENT_WAIT_FIN_2:
                         self.conn.state = State.CLIENT_TIME_WAIT
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
+                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),0.0)
                         self.conn.seq += 1
-                        break
+                        self.conn.close_timer = time()
 
 
                 # if receive a reply
