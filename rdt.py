@@ -317,10 +317,10 @@ class FSM(Thread):
                         self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
                     elif self.conn.socket.mode == 'SR':
                         self.conn.receive_dict[packet.seq] = packet
-                        self.conn.ack = max(self.conn.ack, packet.seq + packet.len)
                         self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=packet.seq + packet.len))
 
             if self.conn.socket.mode == 'SR':
                 while self.conn.next_ack in self.conn.receive_dict:
                     self.conn.recv_queue.put(self.conn.receive_dict[self.conn.next_ack].payload)
+                    self.conn.ack = self.conn.next_ack
                     self.conn.next_ack += self.conn.receive_dict[self.conn.next_ack].len
