@@ -60,6 +60,8 @@ class socket(udp.UDPsocket):
 
     def close(self):
         # TODO unfinished
+        if self.mode == 'SR':
+            self.conn.unACK[self.conn.seq+1] = True
         self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
         self.conn.state = State.CLIENT_WAIT_FIN_1
         self.conn.seq_fin = self.conn.seq
@@ -188,7 +190,10 @@ class FSM(Thread):
                     self.conn.sending_list.clear()
                     for i in range(len(sending_list_copy)):
                         packet, send_time = sending_list_copy[i]
-                        if self.conn.unACK[packet.seq + packet.len]:
+                        expect_ack = packet.seq + packet.len
+                        if packet.FIN:
+                            expect_ack += 1
+                        if self.conn.unACK[expect_ack]:
                             self.conn.sending_list.append([packet, send_time])
                     if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
                         current_send = 0
@@ -230,8 +235,11 @@ class FSM(Thread):
                         if self.conn.fin_cnt >= self.conn.max_fin_cnt:
                             self.conn.close()
                             self.alive = False
-                    if self.conn.state == State.SERVER_WAIT_FIN and len(self.conn.sending_list) == 0:
+                    if self.conn.state == State.SERVER_WAIT_FIN:
+                        self.conn.sending_list.clear()
                         self.conn.state = State.SERVER_LAST_ACK
+                        if self.conn.socket.mode == 'SR':
+                            self.conn.unACK[self.conn.seq + 1] = True
                         self.conn.send_packet_to_sending_list(
                             Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
@@ -288,15 +296,13 @@ class FSM(Thread):
                     if self.conn.state == State.CONNECT:
                         self.conn.state = State.SERVER_WAIT_FIN
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),
-                            0.0)
+                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),)
                         self.conn.seq += 1
 
                     elif self.conn.state == State.CLIENT_WAIT_FIN_2:
                         self.conn.state = State.CLIENT_TIME_WAIT
                         self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack),0.0)
+                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
                         self.conn.seq += 1
                         break
 
@@ -317,9 +323,12 @@ class FSM(Thread):
                         self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack))
                     elif self.conn.socket.mode == 'SR':
                         self.conn.receive_dict[packet.seq] = packet
-                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=packet.seq + packet.len))
+                        expect_ack = packet.seq + packet.len
+                        if packet.FIN:
+                            expect_ack += 1
+                        self.conn.send_packet(Packet(ACK=True, seq=self.conn.seq, seq_ack=expect_ack))
 
-            if self.conn.socket.mode == 'SR':
+            if self.conn.socket.mode == 'SR' and self.conn.state == State.CONNECT:
                 while self.conn.next_ack in self.conn.receive_dict:
                     self.conn.recv_queue.put(self.conn.receive_dict[self.conn.next_ack].payload)
                     self.conn.ack = self.conn.next_ack
