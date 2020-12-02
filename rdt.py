@@ -90,6 +90,7 @@ class Connection:
         self.fin_cnt = 0
         self.max_fin_cnt = 5
         self.state = State.CLOSE
+        self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
         self.sending_list = []  # already send but haven't reply
@@ -247,7 +248,7 @@ class FSM(Thread):
                         self.conn.close()
                         self.alive = False
 
-                    print("NO packet")
+                    print("NO packet\n",end='')
                     break
 
                 if self.conn.socket.mode == 'GBN':
@@ -259,20 +260,29 @@ class FSM(Thread):
                         continue
 
                 # server receive first hand shake
-                if packet.SYN and not packet.ACK:
+                if packet.SYN and not packet.ACK and self.conn.state == State.CLOSE:
                     self.conn.state = State.SERVER_WAIT_SYNACK
                     self.conn.ack = packet.seq + 1
                     self.conn.send_packet_to_sending_list(
                         Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True), 0.0)
 
                 # client receive reply of second hand shake
-                elif packet.SYN and packet.ACK:
+                elif packet.SYN and packet.ACK and self.conn.state == State.CLIENT_WAIT_SYN:
                     self.conn.state = State.CONNECT
                     if self.conn.socket.mode == 'SR':
                         self.conn.unACK[self.conn.seq] = False
                     self.conn.seq = packet.seq_ack
                     self.conn.ack = packet.seq + 1
-                    self.conn.send_packet(Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, ACK=True))
+                    self.second_handshaking = Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, ACK=True)
+                    self.conn.send_packet(self.second_handshaking)
+
+                # there is an error in the third hand shake
+                elif packet.len > 0 and self.conn.state == State.SERVER_WAIT_SYNACK and not packet.ACK:
+                    self.conn.send_packet(Packet(data=b'', seq=self.conn.seq, seq_ack=self.conn.ack, SYN=True, ACK=True))
+
+                # there is an error in the third hand shake
+                elif packet.SYN and packet.ACK and self.conn.state == State.CONNECT:
+                    self.conn.send_packet(self.second_handshaking)
 
                 # server receive third hand shake
                 elif packet.ACK and self.conn.state == State.SERVER_WAIT_SYNACK:
