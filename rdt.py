@@ -95,6 +95,7 @@ class Connection:
         self.max_fin_cnt = 20
         self.state = State.CLOSE
         self.close_timer = 0
+        self.max_close_time = 20
         self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -217,8 +218,6 @@ class FSM(Thread):
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
                 for i in range(len(sending_list_copy)):
-                    if i == self.conn.swnd_size:
-                        break
                     packet, send_time = sending_list_copy[i]
                     if not packet.ACK or packet.SYN:
                         self.conn.sending_list.append([packet, send_time])
@@ -258,7 +257,7 @@ class FSM(Thread):
 
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
                         self.conn.send_packet_to_sending_list(Packet(ACK=True, seq=self.conn.seq-1, seq_ack=self.conn.ack), 0.0)
-                        if time() - self.conn.close_timer > 5:
+                        if time() - self.conn.close_timer > self.conn.max_close_time:
                             self.conn.close()
 
                     print("NO packet\n",end='')
