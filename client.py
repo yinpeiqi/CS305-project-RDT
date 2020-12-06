@@ -11,7 +11,7 @@ if __name__ == "__main__":
     # client.send(MESSAGE)
     # client.send(MESSAGE2)
     # client.send(MESSAGE3)
-    n = 50
+    n = 13
     for i in range(0,n):
         client.send(bytes(("message "+str(i)), encoding='utf-8'))
     time.sleep(3)

@@ -63,7 +63,6 @@ class socket(udp.UDPsocket):
         return conn, conn.client
 
     def close(self):
-        # TODO unfinished
         if self.mode == 'SR':
             self.conn.unACK[self.conn.seq+1] = True
         self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
@@ -110,14 +109,12 @@ class Connection:
 
     def close(self):
         # close connection of conns[addr]
-        # TODO unfinished
         if self.client in self.socket.conns:
             del self.socket.conns[self.client]
         self.close_connection()
         pass
 
     def close_connection(self):
-        # TODO unfinished
         self.state = State.FINISH
         self.connecting = False
 
@@ -187,14 +184,6 @@ class FSM(Thread):
                         packet, send_time = sending_list_copy[i]
                         if packet.seq >= self.conn.already_ack:
                             self.conn.sending_list.append([packet, send_time])
-                    if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
-                        current_send = 0
-                        for packet, send_time in self.conn.sending_list:
-                            self.conn.sending_list[current_send][1] = time()
-                            self.conn.send_packet(packet)
-                            current_send += 1
-                            if current_send == self.conn.swnd_size:
-                                break
 
                 elif self.conn.socket.mode == 'SR':
                     sending_list_copy = self.conn.sending_list.copy()
@@ -204,16 +193,18 @@ class FSM(Thread):
                         expect_ack = packet.seq + packet.len
                         if packet.FIN:
                             expect_ack += 1
-                        if self.conn.unACK[expect_ack]:
+                        if self.conn.unACK[expect_ack] and not (self.conn.state in (State.SERVER_LAST_ACK,State.CLIENT_TIME_WAIT) and packet.len>0):
                             self.conn.sending_list.append([packet, send_time])
-                    if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
-                        current_send = 0
-                        for packet, send_time in self.conn.sending_list:
-                            self.conn.sending_list[current_send][1] = time()
-                            self.conn.send_packet(packet)
-                            current_send += 1
-                            if current_send == self.conn.swnd_size:
-                                break
+
+
+                if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
+                    current_send = 0
+                    for packet, send_time in self.conn.sending_list:
+                        self.conn.sending_list[current_send][1] = time()
+                        self.conn.send_packet(packet)
+                        current_send += 1
+                        if current_send == self.conn.swnd_size:
+                            break
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
@@ -223,7 +214,6 @@ class FSM(Thread):
                         self.conn.sending_list.append([packet, send_time])
 
                 # send the message in send waiting list
-                # TODO add detail
                 if len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT:
                     data = self.conn.packet_send_queue.get()
                     packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
@@ -241,8 +231,12 @@ class FSM(Thread):
                         self.conn.fin_cnt = 0
                 except:
                     if self.conn.state ==  State.SERVER_LAST_ACK:
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
+                        if self.conn.socket.mode == 'GBN':
+                            self.conn.send_packet_to_sending_list(
+                                Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
+                        elif self.conn.socket.mode == 'SR':
+                            self.conn.send_packet_to_sending_list(
+                                Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
                         self.conn.fin_cnt += 1
                         if self.conn.fin_cnt > self.conn.max_fin_cnt:
                             self.conn.close()
