@@ -63,6 +63,8 @@ class socket(udp.UDPsocket):
         return conn, conn.client
 
     def close(self):
+        while len(self.conn.sending_list) != 0:
+            sleep(1)
         if self.mode == 'SR':
             self.conn.unACK[self.conn.seq+1] = True
         self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
@@ -87,7 +89,7 @@ class Connection:
         self.ack = 0
         self.seq_fin = 0
         self.already_ack = 0
-        self.swnd_size = 5
+        self.swnd_size = 500
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
@@ -118,8 +120,12 @@ class Connection:
         self.state = State.FINISH
         self.connecting = False
 
-    def recv(self, buffer_size):
-        return self.recv_queue.get()
+    def recv(self, buffer_size, wait_time=10):
+        try:
+            mess = self.recv_queue.get(wait_time)
+        except:
+            mess = False
+        return mess
         # server recv message
 
     def send(self, data: bytes, flags=...):
