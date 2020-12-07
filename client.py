@@ -11,7 +11,7 @@ if __name__ == "__main__":
     # client.send(MESSAGE)
     # client.send(MESSAGE2)
     # client.send(MESSAGE3)
-    file = open("littleAlice.txt","r")
+    file = open("alice.txt","r")
     for line in file.readlines():
         client.send(bytes(line, encoding='utf-8'))
     # n = 13

@@ -191,8 +191,6 @@ class FSM(Thread):
 
             # retransmit
             if self.conn.state != State.CLOSE:
-                packet_count = 0
-                hit = 0
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
@@ -217,7 +215,7 @@ class FSM(Thread):
                             self.conn.sending_list.append([packet, send_time])
                             hit -= 1
 
-                print(hit, self.conn.swnd_size)
+                print(hit, self.conn.swnd_size,packet_count)
                 self.conn.swnd_size = max(self.conn.min_swnd_size, hit*2)
 
                 if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
@@ -237,7 +235,7 @@ class FSM(Thread):
                         self.conn.sending_list.append([packet, send_time])
 
                 # send the message in send waiting list
-                if len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT:
+                while len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT and len(self.conn.sending_list)<self.conn.swnd_size:
                     data = self.conn.packet_send_queue.get()
                     packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
                     self.conn.seq += packet.len
