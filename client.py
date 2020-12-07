@@ -1,4 +1,4 @@
-from rdt import socket
+from rdt import RDTSocket
 import time
 
 if __name__ == "__main__":
@@ -6,12 +6,12 @@ if __name__ == "__main__":
     MESSAGE = b'hello server'
     MESSAGE2 = b'22222222'
     MESSAGE3 = b'4444444444'
-    client = socket('SR')
+    client = RDTSocket(mode='SR')
     client.connect(("127.0.0.1", 8080))
     # client.send(MESSAGE)
     # client.send(MESSAGE2)
     # client.send(MESSAGE3)
-    file = open("alice.txt","r")
+    file = open("littleAlice.txt","r")
     for line in file.readlines():
         client.send(bytes(line, encoding='utf-8'))
     # n = 13

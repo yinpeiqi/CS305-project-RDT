@@ -1,5 +1,4 @@
 class Packet:
-
     """
     Reliable Data Transfer Segment Format:
 

@@ -1,7 +1,7 @@
-from rdt import socket
+from rdt import RDTSocket
 
 if __name__ == "__main__":
-    server = socket('SR')
+    server = RDTSocket(mode='SR')
     server.bind(("0.0.0.0",8080))
     while True:
         conn, client = server.accept()
@@ -13,6 +13,5 @@ if __name__ == "__main__":
             f.flush()
             if not data:
                 break
-        print("111")
         f.close()
         conn.close()
