@@ -7,11 +7,12 @@ if __name__ == "__main__":
         conn, client = server.accept()
         f = open("read.txt", "w")
         while True:
-            data = conn.recv(2048)
+            data = conn.recv(1024)
             print(str(data))
             f.write(str(data,encoding='utf-8'))
             f.flush()
             if not data:
                 break
+
         f.close()
         conn.close()

@@ -95,7 +95,7 @@ class Connection:
         self.ack = 0
         self.seq_fin = 0
         self.already_ack = 0
-        self.swnd_size = 7
+        self.swnd_size = 5
         self.min_swnd_size = 5
         self.max_time = 1.0
         self.connecting = True
@@ -103,7 +103,7 @@ class Connection:
         self.max_fin_cnt = 20
         self.state = State.CLOSE
         self.close_timer = 0
-        self.max_close_time = 20
+        self.max_close_time = 10
         self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -115,6 +115,7 @@ class Connection:
         self.recv_queue: Queue[bytes] = Queue()  # message that already been receive
         self.fsm = FSM(self)
         self.fsm.start()
+        self.rest_mess = None
 
     def close(self):
         # close connection of conns[addr]
@@ -129,7 +130,18 @@ class Connection:
 
     def recv(self, buffer_size, wait_time=10):
         try:
-            mess = self.recv_queue.get(wait_time)
+            if self.rest_mess is None:
+                mess = self.recv_queue.get(wait_time)
+                if len(mess) > buffer_size:
+                    self.rest_mess = mess[buffer_size:]
+                    mess = mess[:buffer_size]
+            else:
+                if len(self.rest_mess) > buffer_size:
+                    mess = self.rest_mess[:buffer_size]
+                    self.rest_mess = self.rest_mess[buffer_size:]
+                else:
+                    mess = self.rest_mess
+                    self.rest_mess = None
         except:
             mess = False
         return mess
@@ -182,6 +194,8 @@ class FSM(Thread):
         self.conn = conn
 
     def run(self):
+
+        notReceive = 0
 
         while True:
 
@@ -254,6 +268,7 @@ class FSM(Thread):
                     packet = self.conn.packet_receive_queue.get(timeout=1)
                     if not (self.conn.state == State.SERVER_LAST_ACK and packet.ACK):
                         self.conn.fin_cnt = 0
+                    notReceive = 0
                 except:
                     if self.conn.state == State.SERVER_LAST_ACK:
                         if self.conn.socket.mode == 'GBN':
@@ -279,6 +294,12 @@ class FSM(Thread):
                             Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
                         if time() - self.conn.close_timer > self.conn.max_close_time:
                             self.conn.close()
+
+                    elif self.conn.state == State.CONNECT:
+                        notReceive += 1
+                        if notReceive > 200:
+                            self.conn.close_connection()
+                            break
 
                     if self.conn.socket.debug:
                         print("NO packet\n", end='')
