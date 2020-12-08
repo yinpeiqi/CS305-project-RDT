@@ -49,5 +49,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__=='__main__':
-    with Server(server_address, delay=0.0005, corrupt=0.0005) as s:
+    with Server(server_address, delay=0.15, corrupt=0.15) as s:
         s.serve_forever()

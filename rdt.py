@@ -95,7 +95,7 @@ class Connection:
         self.ack = 0
         self.seq_fin = 0
         self.already_ack = 0
-        self.swnd_size = 5
+        self.swnd_size = 7
         self.min_swnd_size = 5
         self.max_time = 1.0
         self.connecting = True
@@ -215,7 +215,7 @@ class FSM(Thread):
                             self.conn.sending_list.append([packet, send_time])
                             hit -= 1
 
-                print(hit, self.conn.swnd_size,packet_count)
+                # print(hit, self.conn.swnd_size,packet_count,len(self.conn.sending_list))
                 self.conn.swnd_size = max(self.conn.min_swnd_size, hit*2)
 
                 if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
@@ -224,7 +224,7 @@ class FSM(Thread):
                         self.conn.sending_list[current_send][1] = time()
                         self.conn.send_packet(packet)
                         current_send += 1
-                        if current_send == max(self.conn.swnd_size,200):
+                        if current_send == self.conn.swnd_size/2:
                             break
 
                 sending_list_copy = self.conn.sending_list.copy()
@@ -234,15 +234,19 @@ class FSM(Thread):
                     if not packet.ACK or packet.SYN:
                         self.conn.sending_list.append([packet, send_time])
 
+                temp = 0
                 # send the message in send waiting list
                 while len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT and len(self.conn.sending_list)<self.conn.swnd_size:
+                    temp+=1
                     data = self.conn.packet_send_queue.get()
                     packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
                     self.conn.seq += packet.len
                     self.conn.send_packet_to_sending_list(packet)
+                    # print("temp: "+str(temp)+"len: "+str(len(self.conn.packet_send_queue.queue))+" sending_list: "+str(len(self.conn.sending_list)))
 
             receive_cnt = 0
             while receive_cnt < max(self.conn.swnd_size,200):
+                # print(receive_cnt)
                 receive_cnt += 1
 
                 # receive the message from receive waiting list
