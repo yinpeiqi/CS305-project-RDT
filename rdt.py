@@ -224,7 +224,7 @@ class FSM(Thread):
                         self.conn.sending_list[current_send][1] = time()
                         self.conn.send_packet(packet)
                         current_send += 1
-                        if current_send == self.conn.swnd_size:
+                        if current_send == max(self.conn.swnd_size,200):
                             break
 
                 sending_list_copy = self.conn.sending_list.copy()
@@ -242,7 +242,7 @@ class FSM(Thread):
                     self.conn.send_packet_to_sending_list(packet)
 
             receive_cnt = 0
-            while receive_cnt < self.conn.swnd_size:
+            while receive_cnt < max(self.conn.swnd_size,200):
                 receive_cnt += 1
 
                 # receive the message from receive waiting list
