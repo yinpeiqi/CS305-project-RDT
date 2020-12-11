@@ -128,10 +128,10 @@ class Connection:
         self.state = State.FINISH
         self.connecting = False
 
-    def recv(self, buffer_size, wait_time=10):
+    def recv(self, buffer_size):
         try:
             if self.rest_mess is None:
-                mess = self.recv_queue.get(wait_time)
+                mess = self.recv_queue.get(buffer_size/self.socket._rate)
                 if len(mess) > buffer_size:
                     self.rest_mess = mess[buffer_size:]
                     mess = mess[:buffer_size]
@@ -192,6 +192,7 @@ class FSM(Thread):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
+        self.sent = 0
 
     def run(self):
 
@@ -208,18 +209,18 @@ class FSM(Thread):
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
-                packet_count = len(sending_list_copy)
-                hit = packet_count
+                hit = 0
 
                 if self.conn.socket.mode == 'GBN':
-                    for i in range(packet_count):
+                    for i in range(len(sending_list_copy)):
                         packet, send_time = sending_list_copy[i]
                         if packet.seq >= self.conn.already_ack:
                             self.conn.sending_list.append([packet, send_time])
-                            hit -= 1
+                        else:
+                            hit += 1
 
                 elif self.conn.socket.mode == 'SR':
-                    for i in range(packet_count):
+                    for i in range(len(sending_list_copy)):
                         packet, send_time = sending_list_copy[i]
                         expect_ack = packet.seq + packet.len
                         if packet.FIN:
@@ -227,19 +228,24 @@ class FSM(Thread):
                         if self.conn.unACK[expect_ack] and not (
                                 self.conn.state in (State.SERVER_LAST_ACK, State.CLIENT_TIME_WAIT) and packet.len > 0):
                             self.conn.sending_list.append([packet, send_time])
-                            hit -= 1
+                        else:
+                            hit += 1
 
-                # print(hit, self.conn.swnd_size,packet_count,len(self.conn.sending_list))
                 self.conn.swnd_size = max(self.conn.min_swnd_size, hit*2)
+                print(hit, self.conn.swnd_size,len(self.conn.sending_list))
 
+                tot_data = 0
                 if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
-                    current_send = 0
+                    self.sent = 0
                     for packet, send_time in self.conn.sending_list:
-                        self.conn.sending_list[current_send][1] = time()
+                        self.conn.sending_list[self.sent][1] = time()
                         self.conn.send_packet(packet)
-                        current_send += 1
-                        if current_send == self.conn.swnd_size/2:
+                        tot_data += packet.len
+                        self.sent += 1
+                        if self.sent == self.conn.swnd_size:
                             break
+                    if self.conn.socket._rate is not None:
+                        sleep(tot_data*0.2/self.conn.socket._rate)
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
@@ -250,13 +256,14 @@ class FSM(Thread):
 
                 temp = 0
                 # send the message in send waiting list
-                while len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT and len(self.conn.sending_list)<self.conn.swnd_size:
+                while len(self.conn.packet_send_queue.queue) != 0 and self.conn.state == State.CONNECT and len(self.conn.sending_list)<self.conn.swnd_size*2:
                     temp+=1
                     data = self.conn.packet_send_queue.get()
                     packet = Packet(data=data, seq=self.conn.seq, seq_ack=self.conn.ack)
                     self.conn.seq += packet.len
                     self.conn.send_packet_to_sending_list(packet)
                     # print("temp: "+str(temp)+"len: "+str(len(self.conn.packet_send_queue.queue))+" sending_list: "+str(len(self.conn.sending_list)))
+
 
             receive_cnt = 0
             while receive_cnt < max(self.conn.swnd_size,200):
@@ -265,7 +272,7 @@ class FSM(Thread):
 
                 # receive the message from receive waiting list
                 try:
-                    packet = self.conn.packet_receive_queue.get(timeout=1)
+                    packet = self.conn.packet_receive_queue.get(timeout=0.2)
                     if not (self.conn.state == State.SERVER_LAST_ACK and packet.ACK):
                         self.conn.fin_cnt = 0
                     notReceive = 0
@@ -303,7 +310,11 @@ class FSM(Thread):
 
                     if self.conn.socket.debug:
                         print("NO packet\n", end='')
-                    break
+                    if receive_cnt < 5:
+                        continue
+                    else:
+                        print(receive_cnt)
+                        break
 
                 if self.conn.socket.mode == 'GBN':
                     if packet.seq > self.conn.ack \

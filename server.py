@@ -1,7 +1,7 @@
 from rdt import RDTSocket
 
 if __name__ == "__main__":
-    server = RDTSocket(mode='SR')
+    server = RDTSocket(rate=1000, mode='SR')
     server.bind(("0.0.0.0",8080))
     while True:
         conn, client = server.accept()
