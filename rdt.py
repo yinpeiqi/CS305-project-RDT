@@ -105,7 +105,7 @@ class Connection:
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
-        self.max_fin_cnt = 20
+        self.max_fin_cnt = 200
         self.state = State.CLOSE
         self.close_timer = 0
         self.max_close_time = 5
@@ -136,7 +136,15 @@ class Connection:
     def recv(self, buffer_size):
         try:
             if self.rest_mess is None:
-                mess = self.recv_queue.get()
+                mess = b''
+                while self.state != State.FINISH:
+                    try:
+                        mess = self.recv_queue.get(timeout=0.5)
+                        break
+                    except:
+                        continue
+                if self.state == State.FINISH:
+                    return b''
                 if len(mess) > buffer_size:
                     self.rest_mess = mess[buffer_size:]
                     mess = mess[:buffer_size]
@@ -209,8 +217,10 @@ class FSM(Thread):
 
         while True:
 
-            if self.conn.state == State.FINISH and self.conn.socket.debug:
-                print("Finish\n", end='')
+            if self.conn.state == State.FINISH:
+                if self.conn.socket.debug:
+                    print("Finish\n", end='')
+                self.conn.close_connection()
                 break
 
             # retransmit
