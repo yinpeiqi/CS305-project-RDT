@@ -10,7 +10,7 @@ Address = Tuple[str, int]
 
 class RDTSocket(UnreliableSocket):
 
-    def __init__(self, rate=None, debug=True, mode='GBN'):
+    def __init__(self, rate=None, debug=True, mode='SR'):
         super().__init__(rate=rate)
         self._rate = rate
         self._send_to = None
@@ -62,10 +62,13 @@ class RDTSocket(UnreliableSocket):
 
         self.conn.send_packet_to_sending_list(packet=Packet(SYN=True, data=b''))
         self.conn.state = State.CLIENT_WAIT_SYN
+        while(self.conn.state != State.CONNECT):
+            continue
 
     def recv(self, bufsize: int) -> bytes:
         # client recv message
-        return self.conn.recv(bufsize)
+        mess = self.conn.recv(bufsize)
+        return mess
 
     def send(self, data: bytes, flags: int = ...):
         # client send message
@@ -79,6 +82,8 @@ class RDTSocket(UnreliableSocket):
         self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
         self.conn.state = State.CLIENT_WAIT_FIN_1
         self.conn.seq_fin = self.conn.seq
+        while self.conn.state != State.FINISH:
+            continue
 
     def set_send_to(self, send_to):
         self._send_to = send_to
@@ -95,15 +100,15 @@ class Connection:
         self.ack = 0
         self.seq_fin = 0
         self.already_ack = 0
-        self.swnd_size = 5
-        self.min_swnd_size = 5
+        self.swnd_size = 500
+        self.min_swnd_size = 500
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
         self.max_fin_cnt = 20
         self.state = State.CLOSE
         self.close_timer = 0
-        self.max_close_time = 10
+        self.max_close_time = 5
         self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -131,7 +136,7 @@ class Connection:
     def recv(self, buffer_size):
         try:
             if self.rest_mess is None:
-                mess = self.recv_queue.get(buffer_size/self.socket._rate)
+                mess = self.recv_queue.get()
                 if len(mess) > buffer_size:
                     self.rest_mess = mess[buffer_size:]
                     mess = mess[:buffer_size]
@@ -143,12 +148,16 @@ class Connection:
                     mess = self.rest_mess
                     self.rest_mess = None
         except:
-            mess = False
+            mess = b''
         return mess
         # server recv message
 
-    def send(self, data: bytes, flags=...):
-        self.packet_send_queue.put(data)
+    def send(self, data: bytes,flag=...):
+        curlen:int = 0
+        while curlen+2048 < len(data):
+            self.packet_send_queue.put(data[curlen:curlen+2048])
+            curlen += 2048
+        self.packet_send_queue.put(data[curlen:])
         # server send message
 
     def send_packet(self, packet):
@@ -232,7 +241,6 @@ class FSM(Thread):
                             hit += 1
 
                 self.conn.swnd_size = max(self.conn.min_swnd_size, hit*2)
-                print(hit, self.conn.swnd_size,len(self.conn.sending_list))
 
                 tot_data = 0
                 if len(self.conn.sending_list) != 0 and time() - self.conn.sending_list[0][1] > self.conn.max_time:
@@ -244,8 +252,8 @@ class FSM(Thread):
                         self.sent += 1
                         if self.sent == self.conn.swnd_size:
                             break
-                    if self.conn.socket._rate is not None:
-                        sleep(tot_data*0.2/self.conn.socket._rate)
+                    # if self.conn.socket._rate is not None:
+                    #     sleep(tot_data*0.2/self.conn.socket._rate)
 
                 sending_list_copy = self.conn.sending_list.copy()
                 self.conn.sending_list.clear()
@@ -272,7 +280,7 @@ class FSM(Thread):
 
                 # receive the message from receive waiting list
                 try:
-                    packet = self.conn.packet_receive_queue.get(timeout=0.2)
+                    packet = self.conn.packet_receive_queue.get(timeout=0.01)
                     if not (self.conn.state == State.SERVER_LAST_ACK and packet.ACK):
                         self.conn.fin_cnt = 0
                     notReceive = 0
@@ -296,6 +304,9 @@ class FSM(Thread):
                         self.conn.send_packet_to_sending_list(
                             Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
 
+                    elif self.conn.state == State.CLIENT_WAIT_FIN_2:
+                        self.conn.state = State.CLIENT_TIME_WAIT
+
                     elif self.conn.state == State.CLIENT_TIME_WAIT:
                         self.conn.send_packet_to_sending_list(
                             Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
@@ -313,7 +324,7 @@ class FSM(Thread):
                     if receive_cnt < 5:
                         continue
                     else:
-                        print(receive_cnt)
+                    #     print(receive_cnt)
                         break
 
                 if self.conn.socket.mode == 'GBN':
