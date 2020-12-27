@@ -83,7 +83,7 @@ if __name__=='__main__':
     client.connect(('127.0.0.1', 9999))
 
     echo = b''
-    count = 5
+    count = 1
     slice_size = 2048
     blocking_send = False
 

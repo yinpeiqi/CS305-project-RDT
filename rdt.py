@@ -10,7 +10,7 @@ Address = Tuple[str, int]
 
 class RDTSocket(UnreliableSocket):
 
-    def __init__(self, rate=None, debug=True, mode='SR'):
+    def __init__(self, rate=None, debug=False, mode='SR'):
         super().__init__(rate=rate)
         self._rate = rate
         self._send_to = None
@@ -105,7 +105,7 @@ class Connection:
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
-        self.max_fin_cnt = 200
+        self.max_fin_cnt = 800
         self.state = State.CLOSE
         self.close_timer = 0
         self.max_close_time = 5
@@ -325,12 +325,12 @@ class FSM(Thread):
 
                     elif self.conn.state == State.CONNECT:
                         notReceive += 1
-                        if notReceive > 200:
+                        if notReceive > 2000:
                             self.conn.close_connection()
                             break
 
-                    if self.conn.socket.debug:
-                        print("NO packet\n", end='')
+                    # if self.conn.socket.debug:
+                        # print("NO packet\n", end='')
                     if receive_cnt < 5:
                         continue
                     else:
