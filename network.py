@@ -1,53 +1,61 @@
 from socket import socket, AF_INET, SOCK_DGRAM, inet_aton, inet_ntoa
-import random, time
-import threading, queue
-from socketserver import ThreadingUDPServer
+from concurrent.futures import ThreadPoolExecutor
+import time
+import threading
+from queue import Queue
+import numpy as np
 
-from rdt import RDTSocket
-
-lock = threading.Lock()
+rng = np.random.default_rng()
+p=5e-5
 
 def bytes_to_addr(bytes):
     return inet_ntoa(bytes[:4]), int.from_bytes(bytes[4:8], 'big')
-    
+
 def addr_to_bytes(addr):
     return inet_aton(addr[0]) + addr[1].to_bytes(4, 'big')
 
-def corrupt(data: bytes) -> bytes:
-    raw = list(data)
-    for _ in range(0, random.randint(0, 3)):
-        pos = random.randint(0, len(raw) - 1)
-        raw[pos] = random.randint(0, 255)
-    return bytes(raw)
+server_addr = ('127.0.0.1', 12345)
 
-class Server(ThreadingUDPServer):
-    def __init__(self, addr, rate=None, delay=None, corrupt=None):
-        super().__init__(addr, None)
-        self.rate = rate            
+class Worker(threading.Thread):
+    def __init__(self, rate = None):
+        super(Worker, self).__init__()
         self.buffer = 0
-        self.delay = delay
-        self.corrupt = corrupt
+        self.queue = Queue()
+        self.rate = rate
+    def run(self):
+        while True:
+            data, to = self.queue.get()
+            if self.rate:
+                time.sleep(len(data) / self.rate)
+            self.buffer -= len(data)
 
-    def verify_request(self, request, client_address):
-        if self.buffer<10:
-            self.buffer+=1
-            return True
-        else:
-            return False
-        
-    def finish_request(self, request, client_address):
-        data, socket = request
-        lock.acquire()
-        if self.rate: time.sleep(len(data)/self.rate)
-        self.buffer -= 1
-        lock.release()
-        
-        to = bytes_to_addr(data[:8])
-        # print(client_address, to)
-        socket.sendto(addr_to_bytes(client_address) + data[8:], to)
-    
-server_address = ('127.0.0.1', 12345)
+            n_corrupt = rng.binomial(len(data), p)
+            if n_corrupt :
+                idx = rng.integers(low=0, high=len(data)-1, size=n_corrupt)
+                data = np.array(bytearray(data))
+                data[idx]+=1
+                data = bytes(data)
+                print('corrupt!', len(data))
+            try:
+                server.sendto(data, to)
+            except OverflowError:
+                pass
 
 if __name__=='__main__':
-    with Server(server_address, rate=20480, delay=0.1, corrupt=0.1 ) as s:
-        s.serve_forever()
+    server = socket(AF_INET, SOCK_DGRAM)
+    server.bind(server_addr)
+    worker = Worker(20480)
+    worker.start()
+    while True:
+        try:
+            seg, client_addr = server.recvfrom(4096)
+        except ConnectionResetError:
+            seg, client_addr = server.recvfrom(4096)
+        if worker.buffer > 48000:
+            print('discard')
+            continue
+
+        to = bytes_to_addr(seg[:8])
+        print(client_addr, to, worker.buffer)  # observe tht traffic
+        worker.buffer += len(seg)
+        worker.queue.put((addr_to_bytes(client_addr)+seg[8:], to))

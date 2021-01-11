@@ -10,7 +10,7 @@ Address = Tuple[str, int]
 
 class RDTSocket(UnreliableSocket):
 
-    def __init__(self, rate=None, debug=False, mode='SR'):
+    def __init__(self, rate=None, debug=True, mode='SR'):
         super().__init__(rate=rate)
         self._rate = rate
         self._send_to = None
@@ -28,7 +28,7 @@ class RDTSocket(UnreliableSocket):
 
         def receive():
             while True:
-                data, addr = self.recvfrom(65536)
+                data, addr = self.recvfrom(4096)
                 packet = Packet.read_from_byte(data)
                 if packet.checksum == Packet.calc_checksum(packet) and len(packet.payload) == packet.len:
                     if addr not in self.conns and (not packet.SYN or packet.FIN):
@@ -52,7 +52,7 @@ class RDTSocket(UnreliableSocket):
         def receive():
             while self.conn.connecting == True:
                 try:
-                    data, addr = self.recvfrom(65536)
+                    data, addr = self.recvfrom(4096)
                     self.conn.receive_packet(Packet.read_from_byte(data))
                 except:
                     pass
@@ -80,7 +80,7 @@ class RDTSocket(UnreliableSocket):
         if self.mode == 'SR':
             self.conn.unACK[self.conn.seq + 1] = True
         self.conn.send_packet_to_sending_list(Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
-        self.conn.state = State.CLIENT_WAIT_FIN_1
+        self.conn.state = State.TIME_WAIT
         self.conn.seq_fin = self.conn.seq
         while self.conn.state != State.FINISH:
             continue
@@ -101,14 +101,14 @@ class Connection:
         self.seq_fin = 0
         self.already_ack = 0
         self.swnd_size = 500
-        self.min_swnd_size = 500
+        self.min_swnd_size = 1
         self.max_time = 1.0
         self.connecting = True
         self.fin_cnt = 0
         self.max_fin_cnt = 800
         self.state = State.CLOSE
         self.close_timer = 0
-        self.max_close_time = 5
+        self.max_close_time = 3
         self.second_handshaking = None
         self.packet_send_queue = Queue()  # packet or data waiting to send
         self.packet_receive_queue: Queue[Packet] = Queue()  # packet waiting to receive
@@ -127,7 +127,7 @@ class Connection:
         if self.client in self.socket.conns:
             del self.socket.conns[self.client]
         self.close_connection()
-        pass
+
 
     def close_connection(self):
         self.state = State.FINISH
@@ -197,11 +197,7 @@ class State(Enum):
     CONNECT = auto()
     CLIENT_WAIT_SYN = auto()
     SERVER_WAIT_SYNACK = auto()
-    CLIENT_WAIT_FIN_1 = auto()
-    CLIENT_WAIT_FIN_2 = auto()
-    CLIENT_TIME_WAIT = auto()
-    SERVER_WAIT_FIN = auto()
-    SERVER_LAST_ACK = auto()
+    TIME_WAIT = auto()
     FINISH = auto()
 
 
@@ -244,8 +240,7 @@ class FSM(Thread):
                         expect_ack = packet.seq + packet.len
                         if packet.FIN:
                             expect_ack += 1
-                        if self.conn.unACK[expect_ack] and not (
-                                self.conn.state in (State.SERVER_LAST_ACK, State.CLIENT_TIME_WAIT) and packet.len > 0):
+                        if self.conn.unACK[expect_ack]:
                             self.conn.sending_list.append([packet, send_time])
                         else:
                             hit += 1
@@ -283,47 +278,23 @@ class FSM(Thread):
                     # print("temp: "+str(temp)+"len: "+str(len(self.conn.packet_send_queue.queue))+" sending_list: "+str(len(self.conn.sending_list)))
 
 
+            if self.conn.state == State.TIME_WAIT:
+                self.conn.send_packet(Packet(FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack))
+                if time() - self.conn.close_timer > self.conn.max_close_time:
+                    self.conn.close()
+                continue
+
             receive_cnt = 0
-            while receive_cnt < max(self.conn.swnd_size,200):
+            while receive_cnt < self.conn.swnd_size:
                 # print(receive_cnt)
                 receive_cnt += 1
 
                 # receive the message from receive waiting list
                 try:
-                    packet = self.conn.packet_receive_queue.get(timeout=0.01)
-                    if not (self.conn.state == State.SERVER_LAST_ACK and packet.ACK):
-                        self.conn.fin_cnt = 0
+                    packet = self.conn.packet_receive_queue.get(timeout=0.001)
                     notReceive = 0
                 except:
-                    if self.conn.state == State.SERVER_LAST_ACK:
-                        if self.conn.socket.mode == 'GBN':
-                            self.conn.send_packet_to_sending_list(
-                                Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
-                        elif self.conn.socket.mode == 'SR':
-                            self.conn.send_packet_to_sending_list(
-                                Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
-                        self.conn.fin_cnt += 1
-                        if self.conn.fin_cnt > self.conn.max_fin_cnt:
-                            self.conn.close()
-                            break
-
-                    elif self.conn.state == State.SERVER_WAIT_FIN:
-                        self.conn.state = State.SERVER_LAST_ACK
-                        if self.conn.socket.mode == 'SR':
-                            self.conn.unACK[self.conn.seq + 1] = True
-                        self.conn.send_packet_to_sending_list(
-                            Packet(data=b'', FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
-
-                    elif self.conn.state == State.CLIENT_WAIT_FIN_2:
-                        self.conn.state = State.CLIENT_TIME_WAIT
-
-                    elif self.conn.state == State.CLIENT_TIME_WAIT:
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq - 1, seq_ack=self.conn.ack), 0.0)
-                        if time() - self.conn.close_timer > self.conn.max_close_time:
-                            self.conn.close()
-
-                    elif self.conn.state == State.CONNECT:
+                    if self.conn.state == State.CONNECT:
                         notReceive += 1
                         if notReceive > 2000:
                             self.conn.close_connection()
@@ -331,7 +302,7 @@ class FSM(Thread):
 
                     # if self.conn.socket.debug:
                         # print("NO packet\n", end='')
-                    if receive_cnt < 5:
+                    if receive_cnt < self.conn.swnd_size:
                         continue
                     else:
                     #     print(receive_cnt)
@@ -339,7 +310,6 @@ class FSM(Thread):
 
                 if self.conn.socket.mode == 'GBN':
                     if packet.seq > self.conn.ack \
-                            and self.conn.state not in (State.CLIENT_WAIT_FIN_2, State.CLIENT_WAIT_FIN_1) \
                             and not packet.FIN and not packet.ACK:
                         if self.conn.socket.debug:
                             s = "come early, reject " + packet.__str__() + "\n"
@@ -379,32 +349,12 @@ class FSM(Thread):
                         self.conn.unACK[self.conn.seq] = False
                     self.conn.seq = packet.seq_ack
 
-                # FIN
-                elif self.conn.state == State.CLIENT_WAIT_FIN_1 and packet.ACK and (
-                        packet.seq_ack == self.conn.seq_fin + 1):
-                    self.conn.state = State.CLIENT_WAIT_FIN_2
-                    self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                    self.conn.seq += 1
-
-                elif self.conn.state == State.SERVER_LAST_ACK and packet.ACK:
-                    self.conn.close()
-                    break
-
                 elif packet.FIN:
-                    if self.conn.state == State.CONNECT:
-                        self.conn.state = State.SERVER_WAIT_FIN
-                        self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
-                        self.conn.seq += 1
-
-                    elif self.conn.state == State.CLIENT_WAIT_FIN_2:
-                        self.conn.state = State.CLIENT_TIME_WAIT
-                        self.conn.ack = max(self.conn.ack, packet.seq + 1)
-                        self.conn.send_packet_to_sending_list(
-                            Packet(ACK=True, seq=self.conn.seq, seq_ack=self.conn.ack), 0.0)
-                        self.conn.seq += 1
-                        self.conn.close_timer = time()
+                    self.conn.state = State.TIME_WAIT
+                    self.conn.ack = max(self.conn.ack, packet.seq + 1)
+                    self.conn.send_packet(Packet(FIN=True, seq=self.conn.seq, seq_ack=self.conn.ack))
+                    self.conn.seq += 1
+                    self.conn.close_timer = time()
 
 
                 # if receive a reply
